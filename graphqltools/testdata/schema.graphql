@@ -1,0 +1,147 @@
+schema
+  @core(feature: "https://specs.apollo.dev/core/v0.2"),
+  @core(feature: "https://specs.apollo.dev/join/v0.1", for: EXECUTION)
+{
+  query: Query
+  mutation: Mutation
+}
+
+directive @core(as: String, feature: String!, for: core__Purpose) repeatable on SCHEMA
+
+directive @join__field(graph: join__Graph, provides: join__FieldSet, requires: join__FieldSet) on FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__owner(graph: join__Graph!) on INTERFACE | OBJECT
+
+directive @join__type(graph: join__Graph!, key: join__FieldSet) repeatable on INTERFACE | OBJECT
+
+directive @provides(fields: String!) on FIELD_DEFINITION
+
+directive @requires(fields: String!) on FIELD_DEFINITION
+
+type ServiceAThing {
+  name: String!
+  color: ColorValueType!
+}
+
+type ServiceBThing {
+  name: String!
+  color: ColorValueType!
+}
+
+type ColorValueType {
+  name: String!
+}
+
+type ServiceAFederatedThing
+  @join__owner(graph: SERVICE_A)
+  @join__type(key: "id", graph: SERVICE_A)
+  @join__type(key: "id", graph: SERVICE_B)
+{
+  id: ID!
+  serviceAField: ServiceAThing!
+  serviceBField: ServiceBThing! @join__field(graph: SERVICE_B)
+  # Note: this field is resolved by serviceA
+  serviceBFederatedThing: ServiceBFederatedThing! @provides(fields: "{ serviceBField }")
+}
+
+type ServiceBFederatedThing
+  @join__owner(graph: SERVICE_B)
+  @join__type(key: "id", graph: SERVICE_A)
+  @join__type(key: "id", graph: SERVICE_B)
+{
+  id: ID!
+  serviceBField: String!
+}
+
+interface SameServiceOwnerInterface {
+  id: ID!
+  serviceAField: String!
+  # It's unusual for an interface field to be defined by a service that doesn't
+  # own the concrete types that implement the interface, but it's possible!
+  serviceBField: String!
+}
+
+type SameServiceOwnerConcreteOne implements SameServiceOwnerInterface
+  @join__owner(graph: SERVICE_A)
+  @join__type(key: "id", graph: SERVICE_A)
+  @join__type(key: "id", graph: SERVICE_B)
+{
+  id: ID!
+  serviceAField: String!
+  serviceBField: String! @join__field(graph: SERVICE_B)
+}
+
+type SameServiceOwnerConcreteTwo implements SameServiceOwnerInterface
+  @join__owner(graph: SERVICE_A)
+  @join__type(key: "id", graph: SERVICE_A)
+  @join__type(key: "id", graph: SERVICE_B)
+{
+  id: ID!
+  serviceAField: String!
+  serviceBField: String! @join__field(graph: SERVICE_B)
+
+  fieldOnlyInServiceB: String! @join__field(graph: SERVICE_B)
+}
+
+interface MixedServiceOwnerInterface {
+  id: ID!
+  mixedOwnershipField: String!
+}
+
+type MixedServiceOwnerConcreteServiceA implements MixedServiceOwnerInterface
+  @join__owner(graph: SERVICE_A)
+  @join__type(key: "id", graph: SERVICE_A)
+  @join__type(key: "id", graph: SERVICE_B)
+{
+  id: ID!
+  mixedOwnershipField: String!
+}
+
+# Generally only one service should "own" an interface since it has to be able
+# to resolve all the concrete types of the interface. However, cross service
+# ownership of concrete types appears to be valid, so let's be sure we can
+# handle this case.
+type MixedServiceOwnerConcreteServiceB implements MixedServiceOwnerInterface
+  @join__owner(graph: SERVICE_B)
+  @join__type(key: "id", graph: SERVICE_A)
+  @join__type(key: "id", graph: SERVICE_B)
+{
+  id: ID!
+  mixedOwnershipField: String!
+}
+
+type Query {
+  serviceAThing: ServiceAThing! @join__field(graph: SERVICE_A)
+  serviceBThing: ServiceAThing! @join__field(graph: SERVICE_B)
+  serviceAFederatedThing: ServiceAFederatedThing! @join__field(graph: SERVICE_A)
+  sameServiceOwnerInterface: [SameServiceOwnerInterface!]! @join__field(graph: SERVICE_A)
+  mixedServiceOwnerInterface: [MixedServiceOwnerInterface!]! @join__field(graph: SERVICE_A)
+  # Here service B resolves an interface that is effectively owned by serviceA.
+  # This is weird, but let's make sure we can handle it.
+  interfaceResolvedByNonOwner: [SameServiceOwnerInterface!]! @join__field(graph: SERVICE_B)
+}
+
+type Mutation {
+  someMutation: String! @join__field(graph: SERVICE_A)
+}
+
+enum core__Purpose {
+  """
+  `EXECUTION` features provide metadata necessary to for operation execution.
+  """
+  EXECUTION
+
+  """
+  `SECURITY` features provide metadata necessary to securely resolve fields.
+  """
+  SECURITY
+}
+
+scalar join__FieldSet
+
+enum join__Graph {
+  SERVICE_A @join__graph(name: "serviceA" url: "unused")
+  SERVICE_B @join__graph(name: "serviceB" url: "unused")
+}

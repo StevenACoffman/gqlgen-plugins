@@ -1,0 +1,82 @@
+{{/* NOTE(benkraft): gqlgen's template functions aren't the best documented;
+     these are the ones we use:
+     - reserveImport: import the given file, ensuring it will not be aliased
+       (such that we can just refer to, say, "context.Context" below).
+     - lookupImport: import the given file, and return the alias under which
+       it will be imported (better for importing user code which may have
+       bad package names).
+     - ref: given a go/types.Type, return the Go code to refer to it
+       (may call lookupImport).
+     - go: given an identifier, turn it into a Go-style CamelCase name.
+     These are listed in gqlgen's codegen/templates.Funcs.
+     TODO(benkraft): put this documentation somewhere in upstream. */}}
+{{ reserveImport "context" }}
+
+{{ reserveImport "github.com/StevenACoffman/simplerr/errors" }}
+{{ reserveImport "github.com/Khan/webapp/pkg/lib/log" }}
+
+{{ if .Errors }}
+    // NOTE: we were unable to generate automappers for the following types:
+    {{- range .Errors }}
+        // - {{.}}
+    {{- end }}
+{{ end }}
+
+{{ range $mapper := .Mappers }}
+    // {{ .MapperName }} converts a Go error to an ADR-303-style
+    // error field of {{ .GraphQLTypeName }}.
+    //
+    // Use in resolvers returning {{ .GraphQLTypeName }} like:
+    //
+    //	if err != nil {
+    //	    return {{ .MapperName }}(ctx, err)
+    //	}
+    //
+    // For more, see
+    //
+    //	go doc dev/gqlgen_plugins.Automap
+    func {{ .MapperName }}(
+        ctx interface {
+            context.Context
+            log.KAContext
+        },
+        err error,
+    ) (*{{ .GraphQLModel | ref }}, error) {
+        makeErr := func(code {{ .GraphQLErrorCode | ref }}) *{{ .GraphQLModel | ref }} {
+            {{- if .DebugMessageField }}
+            msg := errors.ErrorPresenter(ctx, err, true /* redactErrors */).Message
+            {{- end }}
+            return &{{ .GraphQLModel | ref }}{
+                {{ .ErrorField }}: &{{ .GraphQLError | ref}}{
+                    {{ .ErrorCodeField }}: code,
+                    {{- if .DebugMessageField }}
+                        {{.DebugMessageField}}: {{if .DebugMessageIsPointer}}&{{end}}msg,
+                    {{- end }}
+                },
+            }
+        }
+
+        switch {
+            {{- range .Errors}}
+                // {{.PkgPath}}
+                case errors.Is(err, {{ .PkgPath | lookupImport }}.{{ .Name }}):
+                    {{- if .Log }}
+                        ctx.Log().{{.Log | go }}(errors.Wrap(err, "code", {{ $mapper.GraphQLErrorCode | ref }}{{ .To | go }}))
+                    {{- end }}
+                    {{- /* enums are constructed to be <type-name><enum-name | go>, in
+                           gqlgen's plugin/modelgen/models.gotpl. */}}
+                    return makeErr({{ $mapper.GraphQLErrorCode | ref }}{{ .To | go }}), nil
+            {{- end }}
+            case err != nil:
+                {{- if .DefaultCode}}
+                    ctx.Log().Error(errors.Wrap(err, "code", {{ $mapper.GraphQLErrorCode | ref }}{{ .DefaultCode | go }}))
+                    return makeErr({{ $mapper.GraphQLErrorCode | ref }}{{ .DefaultCode | go }}), nil
+                {{- else }}
+                    ctx.Log().Error(err)
+                    return nil, err
+                {{- end }}
+            default: // err == nil
+                return &{{ .GraphQLModel | ref }}{}, nil
+        }
+    }
+{{ end }}
